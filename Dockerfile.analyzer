@@ -1,0 +1,30 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Create stub README for Poetry
+RUN echo "# Bluebird Analyzer Pod" > README.md
+
+# Install dependencies
+COPY pyproject.toml poetry.lock* ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --no-root
+
+# Copy source
+COPY libs ./libs
+COPY pods/analyzer ./analyzer
+
+# Set environment and expose port
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:$PYTHONPATH
+ENV ANALYZER_PORT=8001
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.post('http://localhost:8001/health')" || exit 1
+
+# Run the analyzer pod
+WORKDIR /app/analyzer
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
