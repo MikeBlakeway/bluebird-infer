@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# System deps for audio (libsndfile for soundfile)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create stub README for Poetry
+RUN echo "# Bluebird Music Pod" > README.md
+
+# Install dependencies
+COPY pyproject.toml poetry.lock* ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --no-root
+
+# Copy source
+COPY libs ./libs
+COPY pods/music ./music
+
+# Set environment and expose port
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:$PYTHONPATH
+ENV MUSIC_PORT=8002
+EXPOSE 8002
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.post('http://localhost:8002/health')" || exit 1
+
+# Run the music pod
+WORKDIR /app/music
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8002"]
