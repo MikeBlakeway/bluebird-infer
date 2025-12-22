@@ -14,7 +14,7 @@ This repository contains the Python-based inference services (pods) that power B
 
 ## Architecture
 
-```
+```bash
 bluebird-infer/
 ├── libs/              # Shared libraries
 │   ├── bbcore/        # Core utilities (S3, audio I/O, config, logging)
@@ -70,13 +70,13 @@ docker-compose up --build
 
 ## Pod Endpoints
 
-| Pod        | Port | Endpoint                  | Purpose                      |
-|------------|------|---------------------------|------------------------------|
-| Analyzer   | 8001 | POST /extract             | Extract audio features       |
-| Music      | 8002 | POST /synthesize          | Generate music stems         |
-| Melody     | 8003 | POST /generate-melody     | Generate melodic contours    |
-| Voice      | 8004 | POST /synthesize          | Generate singing vocals      |
-| Similarity | 8005 | POST /check               | Check melody similarity      |
+| Pod        | Port | Endpoint              | Purpose                   |
+| ---------- | ---- | --------------------- | ------------------------- |
+| Analyzer   | 8001 | POST /extract         | Extract audio features    |
+| Music      | 8002 | POST /synthesize      | Generate music stems      |
+| Melody     | 8003 | POST /generate-melody | Generate melodic contours |
+| Voice      | 8004 | POST /synthesize      | Generate singing vocals   |
+| Similarity | 8005 | POST /check           | Check melody similarity   |
 
 ## Environment Variables
 
@@ -107,6 +107,7 @@ poetry run pytest tests/test_bbcore/test_audio.py
 The main Bluebird Node.js API (in the `bluebird` repository) communicates with these pods via HTTP. Workers in the API enqueue jobs, then call the appropriate pod endpoint with S3 URLs for input/output.
 
 **Workflow:**
+
 1. API worker fetches input from S3 (or receives request payload)
 2. API calls pod endpoint (e.g., `POST http://analyzer:8001/extract`)
 3. Pod downloads audio from S3, processes it, uploads result to S3
