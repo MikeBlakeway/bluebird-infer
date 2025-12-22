@@ -2,6 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# System deps for audio (libsndfile needed by soundfile)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create stub README for Poetry
 RUN echo "# Bluebird Analyzer Pod" > README.md
 
@@ -17,7 +22,8 @@ COPY pods/analyzer ./analyzer
 
 # Set environment and expose port
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app:$PYTHONPATH
+# Ensure shared libs are importable (bbcore, bbfeatures)
+ENV PYTHONPATH=/app:/app/libs:$PYTHONPATH
 ENV ANALYZER_PORT=8001
 EXPOSE 8001
 

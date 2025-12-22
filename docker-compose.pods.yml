@@ -1,0 +1,38 @@
+services:
+  analyzer:
+    build:
+      context: .
+      dockerfile: Dockerfile.analyzer
+    image: bluebird-analyzer:local
+    environment:
+      ANALYZER_PORT: 8001
+      BB_S3_ENDPOINT: http://minio:9000
+      BB_S3_ACCESS_KEY: minio
+      BB_S3_SECRET: minio123
+      BB_BUCKET: bluebird
+      BB_LOG_LEVEL: INFO
+    ports:
+      - "8001:8001"
+    networks:
+      - bluebird-network
+
+  music:
+    build:
+      context: .
+      dockerfile: Dockerfile.music
+    image: bluebird-music:local
+    environment:
+      MUSIC_PORT: 8002
+      BB_S3_ENDPOINT: http://minio:9000
+      BB_S3_ACCESS_KEY: minio
+      BB_S3_SECRET: minio123
+      BB_BUCKET: bluebird
+      BB_LOG_LEVEL: INFO
+    ports:
+      - "8002:8002"
+    networks:
+      - bluebird-network
+
+networks:
+  bluebird-network:
+    external: true

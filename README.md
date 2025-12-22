@@ -55,17 +55,21 @@ poetry run ruff check .
 poetry run mypy libs/
 ```
 
+docker-compose up analyzer
+docker-compose up --build
 ### Docker Compose
 
+Use the pod compose file to run analyzer and music locally (expects an external `bluebird-network`; create it with `docker network create bluebird-network` if needed and ensure MinIO/Redis are reachable there).
+
 ```bash
-# Start all pods
-docker-compose up
+# Start analyzer + music pods
+docker compose -f docker-compose.pods.yml up --build analyzer music
 
-# Start specific pod
-docker-compose up analyzer
+# Start a single pod
+docker compose -f docker-compose.pods.yml up --build analyzer
 
-# Rebuild after changes
-docker-compose up --build
+# Tear down
+docker compose -f docker-compose.pods.yml down
 ```
 
 ## Pod Endpoints

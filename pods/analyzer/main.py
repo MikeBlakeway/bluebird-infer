@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-import numpy as np
 
 from bbcore.audio import read_wav_bytes, DEFAULT_SAMPLE_RATE
 from bbcore.logging import setup_logging
@@ -106,11 +105,11 @@ async def analyze_key(file: UploadFile = File(...)):
             audio = audio[:, 0]
 
         # Detect key
-        key, confidence = detect_key(audio, sr)
+        key_result = detect_key(audio, sr)
 
         return {
-            "key": key,
-            "confidence": float(confidence),
+            "key": key_result["key"],
+            "confidence": float(key_result.get("confidence", 0.0)),
         }
 
     except Exception as e:
@@ -141,13 +140,16 @@ async def analyze_bpm(file: UploadFile = File(...)):
             audio = audio[:, 0]
 
         # Detect BPM and onsets
-        result = detect_bpm_and_onsets(audio, sr)
-        bpm = result["bpm"]
-        confidence = 0.8  # Default confidence (could be improved with better estimation)
+        bpm_result = detect_bpm_and_onsets(audio, sr)
+        bpm = float(bpm_result.get("bpm", 0.0))
+        onsets = [float(t) for t in bpm_result.get("onsets", [])]
+        # Simple heuristic: more onsets -> higher confidence, capped at 1.0
+        confidence = 0.0 if bpm == 0.0 else min(1.0, 0.5 + 0.02 * len(onsets))
 
         return {
-            "bpm": float(bpm),
+            "bpm": bpm,
             "confidence": float(confidence),
+            "onsets": onsets,
         }
 
     except Exception as e:
@@ -177,17 +179,22 @@ async def analyze_full(file: UploadFile = File(...)):
         if audio.ndim > 1:
             audio = audio[:, 0]
 
-        result = detect_bpm_and_onsets(audio, sr)
-        bpm = result["bpm"]
-        bpm_conf = 0.8  # Default confidence
-        key, key_conf = detect_key(audio, sr)
-        bpm, bpm_conf = detect_bpm(audio, sr)
+        bpm_result = detect_bpm_and_onsets(audio, sr)
+        bpm = float(bpm_result.get("bpm", 0.0))
+        onsets = [float(t) for t in bpm_result.get("onsets", [])]
+        # Heuristic confidence derived from onset count
+        bpm_conf = 0.0 if bpm == 0.0 else min(1.0, 0.5 + 0.02 * len(onsets))
+
+        key_result = detect_key(audio, sr)
+        key = key_result.get("key", "unknown")
+        key_conf = float(key_result.get("confidence", 0.0))
 
         return {
             "key": key,
-            "key_confidence": float(key_conf),
-            "bpm": float(bpm),
-            "bpm_confidence": float(bpm_conf),
+            "key_confidence": key_conf,
+            "bpm": bpm,
+            "bpm_confidence": bpm_conf,
+            "onsets": onsets,
         }
 
     except Exception as e:
