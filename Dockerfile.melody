@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps for audio (libsndfile needed by soundfile)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create stub README for Poetry
+RUN echo "# Bluebird Melody Pod" > README.md
+
+# Install dependencies
+COPY pyproject.toml poetry.lock* ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --no-root
+
+# Copy source
+COPY libs ./libs
+COPY pods/melody ./melody
+
+# Set environment and expose port
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/app/libs:$PYTHONPATH
+ENV MELODY_PORT=8003
+EXPOSE 8003
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.post('http://localhost:8003/health')" || exit 1
+
+# Run the melody pod
+WORKDIR /app/melody
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8003"]

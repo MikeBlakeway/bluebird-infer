@@ -1,0 +1,34 @@
+# Use base image
+FROM bluebird-infer:base as builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy pyproject for environment context (no root install here)
+COPY pyproject.toml poetry.lock* ./
+
+# Ensure virtualenv has deps without installing project
+RUN poetry install --no-root --no-dev
+
+# Copy shared libraries
+COPY libs/ ./libs/
+
+# Copy similarity pod code
+COPY pods/similarity/ ./pods/similarity/
+
+# Set PYTHONPATH to include libs
+ENV PYTHONPATH=/app/libs:/app/pods/similarity:$PYTHONPATH
+
+# Expose port
+EXPOSE 8005
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.post('http://localhost:8005/health')" || exit 1
+
+# Run similarity pod
+CMD ["poetry", "run", "python", "-m", "uvicorn", \
+    "pods.similarity.main:app", \
+    "--host", "0.0.0.0", \
+    "--port", "8005", \
+    "--log-level", "info"]

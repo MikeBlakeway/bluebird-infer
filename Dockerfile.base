@@ -28,7 +28,10 @@ RUN poetry install --no-root --no-dev && rm -rf $POETRY_CACHE_DIR
 # Copy application code
 COPY libs/ ./libs/
 
-# Install the project
+# Include README for project install context
+COPY README.md ./
+
+# Install the project (ensures package metadata is available)
 RUN poetry install --no-dev
 
 # Default command (override in pod-specific Dockerfiles)
