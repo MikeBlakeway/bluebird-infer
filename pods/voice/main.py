@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from config import Config
 from model import DiffSingerLoader
-from g2p import align_lyrics_to_phonemes
+from g2p import get_aligner
 
 
 # Setup logging
@@ -116,8 +116,11 @@ async def root():
 @app.post("/health", response_model=HealthResponse)
 async def health():
     """Health check endpoint."""
+    status = "ok" if loader.is_ready() else "starting"
+    if loader.get_error():
+        status = "error"
     return {
-        "status": "ok" if loader.is_ready() else "starting",
+        "status": status,
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
         "ready": loader.is_ready(),
@@ -142,18 +145,19 @@ async def synthesize(
         raise HTTPException(status_code=503, detail="Model not initialized")
 
     with tracer.start_as_current_span("voice.synthesize") as span:
-        span.set_attribute("voice.seed", request.seed)
-        span.set_attribute("voice.artist", request.artist or "")
-        span.set_attribute("voice.bpm", request.bpm)
-        span.set_attribute("voice.duration", request.duration)
-        span.set_attribute("voice.idempotency_key", idempotency_key or "")
-        span.set_attribute("voice.lines", len(request.lyrics))
-        span.set_attribute("voice.speaker_id", request.speaker_id or "")
-        if request.f0:
-            span.set_attribute("voice.f0_frames", len(request.f0))
-        if request.phonemes:
-            span.set_attribute("voice.phonemes", len(request.phonemes))
         try:
+            span.set_attribute("voice.seed", request.seed)
+            span.set_attribute("voice.artist", request.artist or "")
+            span.set_attribute("voice.bpm", request.bpm)
+            span.set_attribute("voice.duration", request.duration)
+            span.set_attribute("voice.idempotency_key", idempotency_key or "")
+            span.set_attribute("voice.lines", len(request.lyrics))
+            span.set_attribute("voice.speaker_id", request.speaker_id or "")
+            if request.f0:
+                span.set_attribute("voice.f0_frames", len(request.f0))
+            if request.phonemes:
+                span.set_attribute("voice.phonemes", len(request.phonemes))
+
             logger.info(
                 "Received synthesize request (seed=%s, artist=%s, lines=%d, bpm=%s, dur=%.2f)",
                 request.seed,
@@ -169,8 +173,18 @@ async def synthesize(
             # Deterministic RNG seeded by request.seed
             rng = np.random.default_rng(request.seed)
 
-            # Alignment stub (unused in audio, placeholder for future integration)
-            _alignment = align_lyrics_to_phonemes(request.lyrics, request.bpm)
+            # Alignment using real G2P
+            aligner = get_aligner()
+            alignment = aligner.align_lyrics_to_frames(
+                request.lyrics,
+                request.bpm,
+                request.duration,
+                provided_phonemes=request.phonemes,
+                provided_durations=request.durations,
+            )
+
+            span.set_attribute("voice.alignment_phonemes", len(alignment.get("phonemes", [])))
+            span.set_attribute("voice.alignment_frames", alignment.get("frame_count", 0))
 
             # Validate phoneme/duration pairing if provided
             if request.phonemes is not None:
@@ -239,10 +253,14 @@ async def synthesize(
                 "phoneme_count": len(request.phonemes) if request.phonemes else 0,
                 "has_f0": bool(request.f0),
             }
-
+        except HTTPException:
+            # Re-raise HTTPException without modification (FastAPI will handle)
+            raise
         except Exception as e:
-            logger.error(f"Voice synthesis error: {str(e)}")
-            raise HTTPException(status_code=400, detail=str(e))
+            import traceback
+            error_detail = str(e) if str(e) else f"{type(e).__name__}"
+            logger.error(f"Synthesis error: {type(e).__name__}: {error_detail}", exc_info=True)
+            raise HTTPException(status_code=400, detail=error_detail)
 
 
 if __name__ == "__main__":

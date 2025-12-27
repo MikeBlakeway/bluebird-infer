@@ -25,6 +25,9 @@ opentelemetry-sdk = "^1.21.0"
 opentelemetry-exporter-otlp = "^1.21.0"
 python-multipart = "^0.0.6"
 fastdtw = "^0.3.4"
+torch = "^2.0.0"
+g2p-en = "^2.1.0"
+resampy = "^0.4.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
