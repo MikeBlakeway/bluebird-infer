@@ -127,6 +127,66 @@ async def health():
     }
 
 
+def _synthesize_fallback(
+    f0_curve: np.ndarray,
+    duration: float,
+    sample_rate: int = 48000,
+    seed: int = 0,
+) -> np.ndarray:
+    """Fallback F0-driven sine synthesis when models unavailable.
+
+    Used when DiffSinger models are loading or unavailable.
+    Provides deterministic output based on seed for preview purposes.
+    """
+    np.random.seed(seed)
+    sample_count = int(sample_rate * duration)
+
+    # Use provided F0 curve or default to constant frequency
+    if len(f0_curve) > 0:
+        frame_times = np.linspace(0, duration, len(f0_curve), endpoint=False)
+        sample_times = np.linspace(0, duration, sample_count, endpoint=False)
+        f0_track = np.interp(
+            sample_times,
+            frame_times,
+            f0_curve,
+            left=f0_curve[0] if len(f0_curve) > 0 else 200.0,
+            right=f0_curve[-1] if len(f0_curve) > 0 else 200.0,
+        )
+        voiced_mask = (f0_track > 0.0).astype(np.float32)
+    else:
+        # Default base frequency derived from seed
+        base_freq = 220.0 + (seed % 100)
+        f0_track = np.full(sample_count, base_freq, dtype=np.float32)
+        voiced_mask = np.ones_like(f0_track, dtype=np.float32)
+
+    # Generate phase-based sine
+    omega = 2 * np.pi * f0_track.astype(np.float32)
+    phase = np.cumsum(omega / sample_rate).astype(np.float32)
+    sine = np.sin(phase).astype(np.float32)
+
+    # Simple envelope: attack 50ms, release 200ms
+    attack_samples = int(0.050 * sample_rate)
+    release_samples = int(0.200 * sample_rate)
+    sustain_samples = max(0, sample_count - attack_samples - release_samples)
+
+    envelope = np.concatenate([
+        np.linspace(0.0, 1.0, attack_samples, endpoint=False),
+        np.full(sustain_samples, 1.0, dtype=np.float32),
+        np.linspace(1.0, 0.0, release_samples, endpoint=False),
+    ]).astype(np.float32)
+    envelope = envelope[:sample_count]
+
+    # Apply envelope and voiced mask
+    audio = (sine * envelope * voiced_mask).astype(np.float32)
+
+    # Normalize
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio = audio / max_val * 0.9
+
+    return audio
+
+
 @app.post("/synthesize", response_model=SynthesizeResponse)
 async def synthesize(
     request: SynthesizeRequest,
@@ -194,41 +254,54 @@ async def synthesize(
             if request.durations is not None and sum(request.durations) > request.duration + 1e-3:
                 raise HTTPException(status_code=400, detail="Sum of durations exceeds requested duration")
 
-            sample_count = int(sample_rate * request.duration)
+            # Prepare F0 curve for synthesis
+            f0_curve = np.array(request.f0, dtype=np.float32) if hasattr(request, "f0") and request.f0 else np.array([], dtype=np.float32)
 
-            # If an F0 curve is provided (frames at ~100 Hz), synthesize from it.
-            if hasattr(request, "f0") and request.f0 is not None and len(request.f0) > 0:
-                frame_times = np.linspace(0, request.duration, len(request.f0), endpoint=False)
-                sample_times = np.linspace(0, request.duration, sample_count, endpoint=False)
-                f0_track = np.interp(sample_times, frame_times, np.array(request.f0, dtype=np.float32))
-                # Angular frequency per sample
-                omega = 2 * np.pi * f0_track
-                phase = np.cumsum(omega / sample_rate).astype(np.float32)
-                sine = np.sin(phase).astype(np.float32)
-                # Unvoiced handling: zero-amplitude where f0 <= 0
-                voiced_mask = (f0_track > 0.0).astype(np.float32)
+            # Determine phonemes for synthesis
+            if alignment.get("phonemes"):
+                synthesis_phonemes = alignment["phonemes"]
+                synthesis_durations = alignment.get("durations", [])
+            elif request.phonemes:
+                synthesis_phonemes = request.phonemes
+                synthesis_durations = request.durations or [request.duration / len(request.phonemes)] * len(request.phonemes)
             else:
-                # Base frequency derived from seed and lyric count
-                base_freq = 220.0 + (request.seed % 100)  # 220–319 Hz
-                line_mod = max(1, len(request.lyrics))
-                freq = base_freq * (1.0 + 0.05 * (line_mod - 1))
-                t = np.linspace(0, request.duration, sample_count, endpoint=False)
-                sine = np.sin(2 * np.pi * freq * t).astype(np.float32)
-                voiced_mask = np.ones_like(sine, dtype=np.float32)
+                synthesis_phonemes = []
+                synthesis_durations = []
 
-            # Envelope: attack 50ms, decay 200ms, sustain 0.7, release last 200ms
-            attack = int(0.050 * sample_rate)
-            decay = int(0.200 * sample_rate)
-            release = int(0.200 * sample_rate)
-            sustain_len = max(0, len(sine) - (attack + decay + release))
-            env = np.concatenate([
-                np.linspace(0.0, 1.0, attack, endpoint=False),
-                np.linspace(1.0, 0.7, decay, endpoint=False),
-                np.full(sustain_len, 0.7, dtype=np.float32),
-                np.linspace(0.7, 0.0, release, endpoint=False),
-            ]).astype(np.float32)
-            env = env[: len(sine)]
-            audio = (sine * env * voiced_mask).astype(np.float32)
+            span.set_attribute("voice.synthesis_phonemes", len(synthesis_phonemes))
+
+            # Try real synthesis if models loaded, fallback to stub
+            try:
+                if loader.is_ready():
+                    audio = loader.synthesize(
+                        phonemes=synthesis_phonemes,
+                        durations=synthesis_durations,
+                        f0_curve=f0_curve,
+                        speaker_id=request.speaker_id or "default",
+                        seed=request.seed,
+                    )
+                    span.set_attribute("voice.synthesis_method", "diffsinger")
+                    message = "Generated using DiffSinger synthesis"
+                else:
+                    logger.warning("Models not ready; using fallback synthesis (seed=%d)", request.seed)
+                    audio = _synthesize_fallback(
+                        f0_curve=f0_curve,
+                        duration=request.duration,
+                        sample_rate=sample_rate,
+                        seed=request.seed,
+                    )
+                    span.set_attribute("voice.synthesis_method", "fallback")
+                    message = "Generated using fallback F0 synthesis (models loading)"
+            except Exception as e:
+                logger.error("Real synthesis failed: %s; using fallback", e)
+                audio = _synthesize_fallback(
+                    f0_curve=f0_curve,
+                    duration=request.duration,
+                    sample_rate=sample_rate,
+                    seed=request.seed,
+                )
+                span.set_attribute("voice.synthesis_method", "fallback_error")
+                message = f"Generated using fallback synthesis (error: {type(e).__name__})"
 
             # Convert to mono WAV bytes (PCM_24)
             wav_buffer = io.BytesIO()
@@ -239,8 +312,6 @@ async def synthesize(
             import base64
 
             audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
-
-            message = "Generated F0-driven vocal tone" if (hasattr(request, "f0") and request.f0) else "Generated test vocal tone"
 
             return {
                 "duration": request.duration,
