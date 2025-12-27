@@ -16,8 +16,8 @@ import numpy as np
 import soundfile as sf
 
 from config import Config
-from .model import DiffSingerLoader
-from .g2p import align_lyrics_to_phonemes
+from model import DiffSingerLoader
+from g2p import align_lyrics_to_phonemes
 
 
 # Setup logging
