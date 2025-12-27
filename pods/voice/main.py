@@ -1,15 +1,19 @@
 """Voice Synthesis Pod: FastAPI service scaffold for AI vocals.
 
-Provides health checks and a placeholder /synthesize endpoint to be
-implemented in subsequent days with DiffSinger + vocoder integration.
+Provides health checks and a minimal /synthesize endpoint returning
+generated test audio. Will be replaced with DiffSinger + vocoder
+integration in subsequent steps.
 """
 
+import io
 import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+import numpy as np
+import soundfile as sf
 
 from config import Config
 
@@ -28,26 +32,28 @@ class HealthResponse(BaseModel):
 
 
 class SynthesizeRequest(BaseModel):
-    """Request to synthesize a vocal section (placeholder).
+    """Request to synthesize a vocal section (stub).
 
-    This schema will be extended to include phoneme alignment inputs,
+    This schema will be extended with phoneme alignment inputs,
     F0 curves, and timing once DiffSinger integration lands.
     """
 
     lyrics: List[str] = Field(default_factory=list, description="List of lyric lines")
     artist: Optional[str] = Field(default=None, description="AI artist/voice preset")
-    bpm: Optional[int] = Field(default=None, ge=40, le=300)
-    duration: Optional[float] = Field(default=None, ge=0.5, le=120.0)
+    bpm: int = Field(default=120, ge=40, le=300)
+    duration: float = Field(default=4.0, ge=0.5, le=120.0)
     seed: int = Field(default=42, ge=0, description="Deterministic seed")
 
 
-class SynthesizePlaceholderResponse(BaseModel):
-    """Placeholder response indicating synthesis is not yet implemented."""
+class SynthesizeResponse(BaseModel):
+    """Response with synthesized vocal audio info (stub)."""
 
-    status: str
+    duration: float
+    sample_rate: int
+    bit_depth: int
+    stem_name: str
+    audio: str  # base64 encoded WAV
     message: str
-    service: str
-    version: str
 
 
 # Service metadata
@@ -97,27 +103,75 @@ async def health():
     }
 
 
-@app.post("/synthesize", response_model=SynthesizePlaceholderResponse)
+@app.post("/synthesize", response_model=SynthesizeResponse)
 async def synthesize(request: SynthesizeRequest):
-    """Placeholder endpoint for voice synthesis.
+    """Generate a simple test vocal audio buffer (stub).
 
-    Returns a 501-like response indicating not implemented yet.
+    Produces a short sine tone sequence influenced by seed and lyric count,
+    encoded as base64 WAV for transport. This validates the endpoint and
+    audio pipeline ahead of model integration.
     """
-    logger.info(
-        "Received synthesize request (seed=%s, artist=%s, lines=%d)",
-        request.seed,
-        request.artist,
-        len(request.lyrics),
-    )
+    try:
+        logger.info(
+            "Received synthesize request (seed=%s, artist=%s, lines=%d, bpm=%s, dur=%.2f)",
+            request.seed,
+            request.artist,
+            len(request.lyrics),
+            request.bpm,
+            request.duration,
+        )
 
-    # For now, return a placeholder response. Actual synthesis will be added
-    # when DiffSinger + vocoder integration is implemented.
-    return {
-        "status": "not-implemented",
-        "message": "Voice synthesis not yet integrated",
-        "service": SERVICE_NAME,
-        "version": SERVICE_VERSION,
-    }
+        sample_rate = 48000
+        bit_depth = 24
+
+        # Deterministic RNG seeded by request.seed
+        rng = np.random.default_rng(request.seed)
+
+        # Base frequency derived from seed and lyric count
+        base_freq = 220.0 + (request.seed % 100)  # 220–319 Hz
+        line_mod = max(1, len(request.lyrics))
+        freq = base_freq * (1.0 + 0.05 * (line_mod - 1))
+
+        # Generate a simple sine tone with a basic ADSR-like envelope
+        t = np.linspace(0, request.duration, int(sample_rate * request.duration), endpoint=False)
+        sine = np.sin(2 * np.pi * freq * t).astype(np.float32)
+
+        # Envelope: attack 50ms, decay 200ms, sustain 0.7, release last 200ms
+        attack = int(0.050 * sample_rate)
+        decay = int(0.200 * sample_rate)
+        release = int(0.200 * sample_rate)
+        sustain_len = max(0, len(sine) - (attack + decay + release))
+        env = np.concatenate([
+            np.linspace(0.0, 1.0, attack, endpoint=False),
+            np.linspace(1.0, 0.7, decay, endpoint=False),
+            np.full(sustain_len, 0.7, dtype=np.float32),
+            np.linspace(0.7, 0.0, release, endpoint=False),
+        ]).astype(np.float32)
+        env = env[: len(sine)]
+        audio = (sine * env).astype(np.float32)
+
+        # Convert to mono WAV bytes (PCM_24)
+        wav_buffer = io.BytesIO()
+        sf.write(wav_buffer, audio, sample_rate, subtype="PCM_24", format="WAV")
+        wav_buffer.seek(0)
+        wav_bytes = wav_buffer.getvalue()
+
+        import base64
+
+        audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
+
+        return {
+            "duration": request.duration,
+            "sample_rate": sample_rate,
+            "bit_depth": bit_depth,
+            "stem_name": "vocals",
+            "audio": audio_b64,
+            "message": f"Generated test vocal tone at {int(freq)} Hz",
+        }
+
+    except Exception as e:
+        logger.error(f"Voice synthesis error: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 if __name__ == "__main__":
