@@ -1,6 +1,7 @@
 # Voice Pod - Day 5 Implementation Summary
 
 ## Objective
+
 Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffolds and fallback path.
 
 ## Completed
@@ -8,11 +9,13 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ### 1. Real DiffSinger Model Loader (`pods/voice/model.py`)
 
 **Architecture:**
+
 - `DiffSingerLoader` class with device management (CPU/CUDA auto-detection)
 - Real checkpoint loading via `torch.load()` with state_dict preservation
 - Error tracking (`_error` field) and readiness gating (`_ready` flag)
 
 **Key Methods:**
+
 - `initialize()`: Entry point for async model loading with try/except
 - `_load_diffsinger()`: Real checkpoint loading with path validation
 - `_load_vocoder()`: NSF-HiFiGAN vocoder checkpoint loading
@@ -21,6 +24,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 - `is_ready()`, `get_error()`: Status methods for health checks
 
 **Determinism:**
+
 - Seed-based numpy/torch RNG for reproducible output
 - Same seed = identical audio bytes (verified in testing)
 - Phoneme durations influence envelope shapes
@@ -28,11 +32,13 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ### 2. Synthesis Endpoint Integration (`pods/voice/main.py`)
 
 **Real Synthesis Path:**
+
 - Check `loader.is_ready()` first
 - Call `loader.synthesize(phonemes, durations, f0_curve, speaker_id, seed)`
 - Span attributes: Track `synthesis_method` (diffsinger/fallback/fallback_error)
 
 **Fallback Synthesis Path (`_synthesize_fallback()`):**
+
 - Used when models unavailable or initialization fails
 - F0 interpolation at 48kHz from 100Hz input curve
 - Phase-based sine generation for deterministic output
@@ -41,6 +47,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 - Normalization: [-1, 1] range with 0.9 headroom
 
 **Response Metadata:**
+
 - `speaker_id`: Propagated from request
 - `phoneme_count`: Tracked from alignment
 - `has_f0`: Boolean flag for F0 curve presence
@@ -49,6 +56,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ### 3. Testing & Validation
 
 **Determinism Tests:**
+
 ```
 ✅ Same seed (42) → identical audio output (384061 base64 chars)
 ✅ Speaker propagation: alice, bob, default all correct
@@ -56,6 +64,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ```
 
 **Endpoint Health:**
+
 ```
 ✅ POST /health → status=ok (models loading warning expected without paths)
 ✅ POST /synthesize → 200 OK with full response schema
@@ -64,6 +73,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ```
 
 **Container:**
+
 ```
 ✅ Docker build: Successful with poetry deps
 ✅ Service startup: 8004 port responding
@@ -74,6 +84,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ## Current State
 
 ### What's Ready for Real Models
+
 - ✅ Checkpoint loading infrastructure (torch.load → state_dict)
 - ✅ Device management (CUDA/CPU detection)
 - ✅ Synthesis method signature (phonemes, durations, f0, speaker_id, seed)
@@ -82,12 +93,14 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 - ✅ Response schema with metadata
 
 ### What's Stubbed (Awaiting Model Files)
+
 - ⏳ Actual DiffSinger forward pass (currently placeholder)
 - ⏳ Vocoder mel-to-waveform conversion
 - ⏳ Real warmup with dummy data
 - ⏳ Multi-speaker embedding injection (structure in place)
 
 ### Environment Notes
+
 - No model paths set (DIFFSINGER_MODEL_PATH, VOCODER_MODEL_PATH empty)
 - Fallback synthesis automatically engages (non-blocking)
 - NLTK averaged_perceptron_tagger not cached in image (OK, uses g2p_en fallback)
@@ -96,7 +109,8 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ## Next Steps
 
 ### Immediate (When Model Files Available)
-1. **Implement Real DiffSinger Forward Pass** 
+
+1. **Implement Real DiffSinger Forward Pass**
    - Load checkpoint state_dict into DiffSinger model class
    - Prepare inputs: phoneme IDs, duration frame grid, F0 curve, speaker embedding
    - Run inference in eval mode (no gradients)
@@ -113,12 +127,14 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
    - Verify GPU memory allocation/deallocation
 
 ### Performance & Validation
+
 - **TTFP Target**: ≤8s per 30s section on GPU (batch mode)
 - **Determinism**: Verify seed=42 always produces identical bytes
 - **Multi-speaker**: Test with 3+ speaker IDs, ensure embeddings differ
 - **Phoneme Alignment**: Validate frame-level precision (±50ms tolerance)
 
 ### Integration Points
+
 - **Music Pod F0 Output**: Currently sending f0_curve as 100Hz frames, perfect for DiffSinger
 - **Melody Pod**: Can request specific pitch contours, constrain via similarity budget
 - **Similarity Pod**: Will compare generated melody against reference (upcoming)
@@ -126,6 +142,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 ## Code Quality
 
 **Metrics:**
+
 - ✅ Python syntax: Valid (compiled successfully)
 - ✅ Type hints: Compatible with Pydantic schemas
 - ✅ Error handling: Try/except with fallback paths
@@ -134,6 +151,7 @@ Replace stub F0-driven sine tone synthesis with real DiffSinger inference scaffo
 - ✅ Determinism: Seed-based RNG verified
 
 **Git:**
+
 - ✅ Committed: `feat(voice-pod): implement real DiffSinger inference scaffolds`
 - ✅ All files: model.py (real loading), main.py (fallback synthesis), tests passing
 

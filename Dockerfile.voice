@@ -16,6 +16,9 @@ RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.create false && \
     poetry install --no-interaction --no-ansi --no-root
 
+# Download NLTK data for G2P phoneme alignment (needed by g2p_en)
+RUN python -m nltk.downloader averaged_perceptron_tagger_eng -d /usr/local/share/nltk_data
+
 # Copy source
 COPY libs ./libs
 COPY pods/voice ./voice

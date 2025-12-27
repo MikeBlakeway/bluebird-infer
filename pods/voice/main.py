@@ -321,7 +321,7 @@ async def synthesize(
                 "audio": audio_b64,
                 "message": message,
                 "speaker_id": request.speaker_id,
-                "phoneme_count": len(request.phonemes) if request.phonemes else 0,
+                "phoneme_count": len(synthesis_phonemes),
                 "has_f0": bool(request.f0),
             }
         except HTTPException:
