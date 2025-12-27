@@ -44,10 +44,15 @@ class SynthesizeRequest(BaseModel):
 
     lyrics: List[str] = Field(default_factory=list, description="List of lyric lines")
     artist: Optional[str] = Field(default=None, description="AI artist/voice preset")
+    speaker_id: Optional[str] = Field(default=None, description="Voice speaker identifier")
     bpm: int = Field(default=120, ge=40, le=300)
     duration: float = Field(default=4.0, ge=0.5, le=120.0)
     seed: int = Field(default=42, ge=0, description="Deterministic seed")
     f0: Optional[List[float]] = Field(default=None, description="Optional F0 curve (Hz) at ~100 fps")
+    phonemes: Optional[List[str]] = Field(default=None, description="Aligned phoneme sequence")
+    durations: Optional[List[float]] = Field(default=None, description="Durations per phoneme (seconds)")
+    noise_scale: float = Field(default=0.667, ge=0.0, le=2.0, description="Synthesis noise scale")
+    energy: Optional[List[float]] = Field(default=None, description="Optional energy envelope")
 
 
 class SynthesizeResponse(BaseModel):
@@ -59,6 +64,9 @@ class SynthesizeResponse(BaseModel):
     stem_name: str
     audio: str  # base64 encoded WAV
     message: str
+    speaker_id: Optional[str] = None
+    phoneme_count: int
+    has_f0: bool
 
 
 # Service metadata
@@ -140,6 +148,11 @@ async def synthesize(
         span.set_attribute("voice.duration", request.duration)
         span.set_attribute("voice.idempotency_key", idempotency_key or "")
         span.set_attribute("voice.lines", len(request.lyrics))
+        span.set_attribute("voice.speaker_id", request.speaker_id or "")
+        if request.f0:
+            span.set_attribute("voice.f0_frames", len(request.f0))
+        if request.phonemes:
+            span.set_attribute("voice.phonemes", len(request.phonemes))
         try:
             logger.info(
                 "Received synthesize request (seed=%s, artist=%s, lines=%d, bpm=%s, dur=%.2f)",
@@ -158,6 +171,14 @@ async def synthesize(
 
             # Alignment stub (unused in audio, placeholder for future integration)
             _alignment = align_lyrics_to_phonemes(request.lyrics, request.bpm)
+
+            # Validate phoneme/duration pairing if provided
+            if request.phonemes is not None:
+                if request.durations is None or len(request.phonemes) != len(request.durations):
+                    raise HTTPException(status_code=400, detail="phonemes and durations must be provided with equal length")
+
+            if request.durations is not None and sum(request.durations) > request.duration + 1e-3:
+                raise HTTPException(status_code=400, detail="Sum of durations exceeds requested duration")
 
             sample_count = int(sample_rate * request.duration)
 
@@ -214,6 +235,9 @@ async def synthesize(
                 "stem_name": "vocals",
                 "audio": audio_b64,
                 "message": message,
+                "speaker_id": request.speaker_id,
+                "phoneme_count": len(request.phonemes) if request.phonemes else 0,
+                "has_f0": bool(request.f0),
             }
 
         except Exception as e:
