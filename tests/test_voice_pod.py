@@ -8,8 +8,9 @@ def test_voice_health():
     resp = client.post("/health")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "ok"
+    assert data["status"] in {"ok", "starting"}
     assert data["service"] == "voice"
+    assert "ready" in data
 
 
 def test_voice_synthesize_stub():
@@ -20,9 +21,36 @@ def test_voice_synthesize_stub():
         "duration": 1.0,
         "seed": 123,
     }
-    resp = client.post("/synthesize", json=payload)
+    resp = client.post(
+        "/synthesize",
+        json=payload,
+        headers={"Idempotency-Key": "test-stub"},
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["stem_name"] == "vocals"
     assert isinstance(data["audio"], str)
     assert len(data["audio"]) > 1000  # base64 length for ~1s should be non-trivial
+
+
+def test_voice_synthesize_f0_track():
+    client = TestClient(app)
+    # 1 second duration at 100 fps -> 100 frames of 220 Hz
+    f0 = [220.0] * 100
+    payload = {
+        "lyrics": ["A"],
+        "bpm": 90,
+        "duration": 1.0,
+        "seed": 1,
+        "f0": f0,
+    }
+    resp = client.post(
+        "/synthesize",
+        json=payload,
+        headers={"Idempotency-Key": "test-f0"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "F0" in data["message"]
+    assert data["sample_rate"] == 48000
+    assert len(data["audio"]) > 1000

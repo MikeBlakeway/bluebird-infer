@@ -16,6 +16,13 @@ class Config:
     SERVICE_PORT = int(os.getenv("VOICE_PORT", 8004))
     ENV = os.getenv("ENV", "dev")
 
+    # Models
+    DIFFSINGER_MODEL_PATH = os.getenv("DIFFSINGER_MODEL_PATH")
+    VOCODER_MODEL_PATH = os.getenv("VOCODER_MODEL_PATH")
+
+    # Idempotency
+    REQUIRE_IDEMPOTENCY = os.getenv("REQUIRE_IDEMPOTENCY", "true").lower() == "true"
+
     # Limits
     MAX_TEXT_LENGTH = int(os.getenv("MAX_TEXT_LENGTH", 5000))
     MAX_AUDIO_DURATION = int(os.getenv("MAX_AUDIO_DURATION", 600))  # 10 minutes
