@@ -370,7 +370,7 @@ class VoiceSynthesisValidator:
 
     def decode_audio(self, audio_b64: str) -> tuple:
         """Decode base64 audio to numpy array.
-        
+
         Returns (audio, sample_rate) tuple.
         """
         try:

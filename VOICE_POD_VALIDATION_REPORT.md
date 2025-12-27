@@ -4,7 +4,7 @@
 
 ### Architecture State
 - ✅ Real DiffSinger loader scaffolds implemented
-- ✅ Fallback synthesis path fully operational  
+- ✅ Fallback synthesis path fully operational
 - ✅ Deterministic seed control verified
 - ✅ Speaker ID propagation working
 - ⏳ Real model path gating (awaiting model files)

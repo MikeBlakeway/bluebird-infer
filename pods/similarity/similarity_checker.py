@@ -175,7 +175,11 @@ class SimilarityChecker:
 
 def create_checker() -> SimilarityChecker:
     """Factory function to create configured checker."""
-    from config import config
+    try:
+        from pods.similarity.config import config
+    except ImportError:
+        # Fallback for test environment
+        from .config import config
 
     return SimilarityChecker(
         pass_threshold=config.PASS_THRESHOLD,
