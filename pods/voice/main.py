@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .config import Config
+from config import Config
 
 
 # Setup logging
