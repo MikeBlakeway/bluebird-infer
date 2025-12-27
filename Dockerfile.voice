@@ -1,0 +1,35 @@
+FROM python:3.11-slim
+
+# System deps for audio (libsndfile for soundfile) and potential G2P usage later
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create stub README for Poetry
+RUN echo "# Bluebird Voice Pod" > README.md
+
+# Install dependencies
+COPY pyproject.toml poetry.lock* ./
+RUN pip install --no-cache-dir poetry && \
+    poetry config virtualenvs.create false && \
+    poetry install --no-interaction --no-ansi --no-root
+
+# Copy source
+COPY libs ./libs
+COPY pods/voice ./voice
+
+# Set environment and expose port
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:$PYTHONPATH
+ENV VOICE_PORT=8004
+EXPOSE 8004
+
+# Health check (use stdlib urllib to avoid extra deps)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8004/')" || exit 1
+
+# Run the voice pod
+WORKDIR /app/voice
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8004"]
