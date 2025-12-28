@@ -9,11 +9,40 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 import runpod
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
 
 from libs.bbcore.s3 import from_env as s3_from_env, S3
 from libs.bbcore.logging import *  # noqa: F401,F403
 
 logger = logging.getLogger(__name__)
+
+# Initialize OTEL tracing
+_otel_endpoint = os.getenv("BB_OTEL_ENDPOINT", "http://localhost:4317")
+_tracer = None
+
+def init_otel():
+  """Initialize OpenTelemetry tracing."""
+  global _tracer
+  try:
+    resource = Resource.create({"service.name": "separation-pod"})
+    otlp_exporter = OTLPSpanExporter(endpoint=_otel_endpoint)
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    trace.set_tracer_provider(tracer_provider)
+    _tracer = trace.get_tracer(__name__)
+    RequestsInstrumentor().instrument()
+    logger.info(f"OTEL initialized: endpoint={_otel_endpoint}")
+  except Exception as e:
+    logger.warning(f"Failed to initialize OTEL: {e}")
+    _tracer = None
+
+init_otel()
+
 
 # Expected input payload
 # {
@@ -134,6 +163,20 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
   mode = event.get("mode", "4stem")
   quality = event.get("quality", "balanced")
 
+  # Create OTEL span
+  if _tracer:
+    with _tracer.start_as_current_span("separation_job") as span:
+      span.set_attribute("job_id", job_id)
+      span.set_attribute("project_id", project_id)
+      span.set_attribute("take_id", take_id)
+      span.set_attribute("mode", mode)
+      span.set_attribute("quality", quality)
+      return _run_separation(project_id, take_id, job_id, mode, quality, start)
+  else:
+    return _run_separation(project_id, take_id, job_id, mode, quality, start)
+
+def _run_separation(project_id: str, take_id: str, job_id: str, mode: str, quality: str, start: float) -> Dict[str, Any]:
+  """Core separation logic."""
   logger.info(f"Starting separation job {job_id}: mode={mode}, quality={quality}")
 
   s3 = s3_from_env()
@@ -142,7 +185,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
   with tempfile.TemporaryDirectory() as td:
     tmpdir = Path(td)
     input_path = tmpdir / "input.audio"
-    download_input(s3, event, input_path)
+    download_input(s3, {"audioUrl": None, "audioKey": None, **{"audioUrl": None, "audioKey": None}}, input_path)
     logger.info(f"Downloaded input to {input_path}")
 
     # Get Demucs config based on mode and quality
@@ -150,7 +193,15 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
 
     out_dir = tmpdir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
-    stems_dir = run_demucs(input_path, out_dir, config)
+    
+    if _tracer:
+      with _tracer.start_as_current_span("demucs_run") as span:
+        span.set_attribute("model", config.model)
+        span.set_attribute("segment", config.segment or 0)
+        stems_dir = run_demucs(input_path, out_dir, config)
+    else:
+      stems_dir = run_demucs(input_path, out_dir, config)
+    
     logger.info(f"Demucs completed in {time.time() - start:.2f}s")
 
     # Collect stems based on output mode
@@ -160,11 +211,20 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     # Upload stems to S3
     rel_base = f"analysis/separation/{job_id}/"
     keys = {}
-    for name, path in stems_paths.items():
-      key = S3.build_key(project_id, take_id, rel_base + f"{name}.wav")
-      url = s3.upload_file(str(path), key, content_type="audio/wav")
-      keys[name] = s3.presign(key)
-      logger.info(f"Uploaded {name} to S3: {key}")
+    if _tracer:
+      with _tracer.start_as_current_span("s3_upload") as span:
+        span.set_attribute("stem_count", len(stems_paths))
+        for name, path in stems_paths.items():
+          key = S3.build_key(project_id, take_id, rel_base + f"{name}.wav")
+          url = s3.upload_file(str(path), key, content_type="audio/wav")
+          keys[name] = s3.presign(key)
+          logger.info(f"Uploaded {name} to S3: {key}")
+    else:
+      for name, path in stems_paths.items():
+        key = S3.build_key(project_id, take_id, rel_base + f"{name}.wav")
+        url = s3.upload_file(str(path), key, content_type="audio/wav")
+        keys[name] = s3.presign(key)
+        logger.info(f"Uploaded {name} to S3: {key}")
 
     # Extract metadata from first available stem
     duration = None
@@ -182,18 +242,20 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
       except Exception as e:
         logger.warning(f"Failed to extract metadata: {e}")
 
+    processing_time = time.time() - start
     result = {
       "jobId": job_id,
       "stems": keys,
-      "processingTime": time.time() - start,
+      "processingTime": processing_time,
       "metadata": {
         "duration": duration or 0,
         "sampleRate": sample_rate or 48000,
         "channels": channels or 2,
       },
     }
-    logger.info(f"Separation job {job_id} complete in {result['processingTime']:.2f}s")
+    logger.info(f"Separation job {job_id} complete in {processing_time:.2f}s")
     return result
+
 
 
 
