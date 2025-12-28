@@ -193,7 +193,7 @@ def _run_separation(project_id: str, take_id: str, job_id: str, mode: str, quali
 
     out_dir = tmpdir / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     if _tracer:
       with _tracer.start_as_current_span("demucs_run") as span:
         span.set_attribute("model", config.model)
@@ -201,7 +201,7 @@ def _run_separation(project_id: str, take_id: str, job_id: str, mode: str, quali
         stems_dir = run_demucs(input_path, out_dir, config)
     else:
       stems_dir = run_demucs(input_path, out_dir, config)
-    
+
     logger.info(f"Demucs completed in {time.time() - start:.2f}s")
 
     # Collect stems based on output mode
