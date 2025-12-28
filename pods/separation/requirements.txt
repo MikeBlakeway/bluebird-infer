@@ -1,0 +1,10 @@
+runpod
+boto3
+pydantic>=2.6.0
+numpy
+scipy
+soundfile
+torch>=2.1.0
+torchaudio>=2.1.0
+ffmpeg-python
+demucs>=4.0.1
